@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trading Strategy Builder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      * {
+        font-family: 'Inter', sans-serif;
+        box-sizing: border-box;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      .connection {
+        stroke: #6366f1;
+        stroke-width: 2;
+        fill: none;
+        stroke-linecap: round;
+        stroke-dasharray: 5;
+        animation: flow 20s linear infinite;
+      }
+
+      @keyframes flow {
+        from {
+          stroke-dashoffset: 100;
+        }
+        to {
+          stroke-dashoffset: 0;
+        }
+      }
+
+      .node-handle {
+        width: 14px;
+        height: 14px;
+        background: #6366f1;
+        border-radius: 999px;
+        transition: all 0.2s;
+        cursor: crosshair;
+        z-index: 20;
+      }
+
+      .node-handle:hover {
+        transform: scale(1.3);
+        background: #818cf8;
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+      }
+
+      .dark-canvas {
+        background: #0b0f19;
+      }
+
+      .strategy-node {
+        background: #111827;
+        border: 1px solid #1f2937;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        transition: all 0.2s;
+        z-index: 10;
+      }
+
+      .strategy-node:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.25);
+        border-color: #374151;
+      }
+
+      .glass-sidebar {
+        background: rgba(17, 24, 39, 0.95);
+        backdrop-filter: blur(8px);
+        border-color: rgba(255, 255, 255, 0.05);
+      }
+
+      .connection-container {
+        z-index: 20;
+      }
+
+      #nodes-container {
+        z-index: 15;
+      }
+
+      .no-select {
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      .condition-node .node-handle[data-handle='input'] {
+        background: #10b981;
+      }
+    </style>
+  </head>
+  <body class="bg-slate-900 h-screen overflow-hidden no-select">
+    <div class="flex h-full">
+      <!-- Sidebar -->
+      <div class="glass-sidebar w-64 p-4 border-r flex flex-col gap-3">
+        <h2
+          class="text-slate-300 font-bold text-xs uppercase tracking-wider mb-3"
+        >
+          Strategy Builder
+        </h2>
+        <div class="text-slate-400 font-medium text-sm mb-2">Indicators</div>
+        <div
+          draggable="true"
+          data-type="indicator"
+          data-indicator="SMA"
+          class="draggable-indicator px-3 py-2.5 bg-slate-800/50 rounded-lg text-slate-200 text-sm cursor-move hover:bg-slate-700/50 transition-all flex items-center gap-2 border border-slate-700/50"
+        >
+          <div class="w-2 h-2 bg-indigo-400 rounded-full"></div>
+          Simple Moving Average
+        </div>
+        <div
+          draggable="true"
+          data-type="indicator"
+          data-indicator="EMA"
+          class="draggable-indicator px-3 py-2.5 bg-slate-800/50 rounded-lg text-slate-200 text-sm cursor-move hover:bg-slate-700/50 transition-all flex items-center gap-2 border border-slate-700/50"
+        >
+          <div class="w-2 h-2 bg-pink-400 rounded-full"></div>
+          Exponential MA
+        </div>
+        <div
+          draggable="true"
+          data-type="indicator"
+          data-indicator="RSI"
+          class="draggable-indicator px-3 py-2.5 bg-slate-800/50 rounded-lg text-slate-200 text-sm cursor-move hover:bg-slate-700/50 transition-all flex items-center gap-2 border border-slate-700/50"
+        >
+          <div class="w-2 h-2 bg-emerald-400 rounded-full"></div>
+          RSI
+        </div>
+
+        <div class="text-slate-400 font-medium text-sm mt-4 mb-2">
+          Conditions
+        </div>
+        <div
+          draggable="true"
+          data-type="condition"
+          data-condition="crosses_above"
+          class="draggable-condition px-3 py-2.5 bg-slate-800/50 rounded-lg text-slate-200 text-sm cursor-move hover:bg-slate-700/50 transition-all flex items-center gap-2 border border-slate-700/50"
+        >
+          <div class="w-2 h-2 bg-amber-400 rounded-full"></div>
+          Crosses Above
+        </div>
+        <div
+          draggable="true"
+          data-type="condition"
+          data-condition="crosses_below"
+          class="draggable-condition px-3 py-2.5 bg-slate-800/50 rounded-lg text-slate-200 text-sm cursor-move hover:bg-slate-700/50 transition-all flex items-center gap-2 border border-slate-700/50"
+        >
+          <div class="w-2 h-2 bg-cyan-400 rounded-full"></div>
+          Crosses Below
+        </div>
+      </div>
+
+      <!-- Canvas -->
+      <div class="flex-1 dark-canvas relative overflow-auto" id="canvas">
+        <svg
+          class="connection-container absolute top-0 left-0 w-full h-full pointer-events-none"
+          id="connections"
+        ></svg>
+        <div class="absolute inset-0" id="nodes-container"></div>
+      </div>
+    </div>
+
+    <script>
+      let nodes = [];
+      let connections = [];
+      let activeHandle = null;
+      let currentConnection = null;
+      let dragItem = null;
+
+      // Drag & Drop Handlers
+      document.addEventListener('dragstart', (e) => {
+        if (
+          e.target.classList.contains('draggable-indicator') ||
+          e.target.classList.contains('draggable-condition')
+        ) {
+          dragItem = {
+            type: e.target.dataset.type,
+            value: e.target.dataset.indicator || e.target.dataset.condition,
+          };
+        }
+      });
+
+      document.getElementById('canvas').addEventListener('dragover', (e) => {
+        e.preventDefault();
+      });
+
+      document.getElementById('canvas').addEventListener('drop', (e) => {
+        if (!dragItem) return;
+
+        const rect = e.target.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        if (dragItem.type === 'indicator') {
+          createIndicatorNode(dragItem.value, x, y);
+        }
+        if (dragItem.type === 'condition') {
+          createConditionNode(dragItem.value, x, y);
+        }
+
+        dragItem = null;
+      });
+
+      // Node Creation
+      function createIndicatorNode(indicator, x, y) {
+        const node = document.createElement('div');
+        node.className =
+          'strategy-node absolute rounded-xl p-4 w-52 cursor-grab active:cursor-grabbing';
+        node.style.left = `${x}px`;
+        node.style.top = `${y}px`;
+
+        node.innerHTML = `
+                <div class="flex flex-col gap-3">
+                    <div class="text-slate-200 font-semibold text-sm flex items-center gap-2">
+                        <div class="w-2 h-2 bg-indigo-400 rounded-full"></div>
+                        ${indicator}
+                    </div>
+                    <input type="number" 
+                           class="bg-slate-800/50 text-slate-200 px-3 py-1.5 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/50 focus:outline-none placeholder-slate-500" 
+                           placeholder="Period (14)"
+                           value="14">
+                    <div class="flex justify-center mt-2">
+                        <div class="node-handle" data-handle="output"></div>
+                    </div>
+                </div>
+            `;
+
+        node
+          .querySelector('.node-handle')
+          .addEventListener('mousedown', startConnection);
+        makeDraggable(node);
+        document.getElementById('nodes-container').appendChild(node);
+        nodes.push(node);
+      }
+
+      function createConditionNode(condition, x, y) {
+        const node = document.createElement('div');
+        node.className =
+          'strategy-node condition-node absolute rounded-xl p-4 w-48 cursor-grab active:cursor-grabbing';
+        node.style.left = `${x}px`;
+        node.style.top = `${y}px`;
+
+        node.innerHTML = `
+                <div class="flex flex-col items-center gap-3">
+                    <div class="text-slate-200 font-semibold text-sm flex items-center gap-2">
+                        <div class="w-2 h-2 bg-amber-400 rounded-full"></div>
+                        ${condition.replace('_', ' ')}
+                    </div>
+                    <div class="flex justify-between w-full px-4 relative">
+                        <div class="node-handle" data-handle="input"></div>
+                        <div class="node-handle" data-handle="input"></div>
+                    </div>
+                </div>
+            `;
+
+        node
+          .querySelectorAll('.node-handle')
+          .forEach((h) => h.addEventListener('mousedown', startConnection));
+        makeDraggable(node);
+        document.getElementById('nodes-container').appendChild(node);
+        nodes.push(node);
+      }
+
+      // Draggable Nodes
+      function makeDraggable(element) {
+        let isDragging = false;
+        let startX, startY, initialX, initialY;
+
+        element.addEventListener('mousedown', (e) => {
+          if (e.target.classList.contains('node-handle')) return;
+
+          isDragging = true;
+          element.style.cursor = 'grabbing';
+          startX = e.clientX;
+          startY = e.clientY;
+          initialX = element.offsetLeft;
+          initialY = element.offsetTop;
+
+          document.addEventListener('mousemove', drag);
+          document.addEventListener('mouseup', stopDrag);
+        });
+
+        function drag(e) {
+          if (!isDragging) return;
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          element.style.left = `${initialX + dx}px`;
+          element.style.top = `${initialY + dy}px`;
+          updateConnections();
+        }
+
+        function stopDrag() {
+          isDragging = false;
+          element.style.cursor = 'grab';
+          document.removeEventListener('mousemove', drag);
+          document.removeEventListener('mouseup', stopDrag);
+        }
+      }
+
+      // Connection Logic
+      function startConnection(e) {
+        e.stopPropagation();
+        document.body.classList.add('no-select');
+        activeHandle = {
+          element: e.target,
+          node: e.target.closest('.strategy-node'),
+          type: e.target.dataset.handle,
+        };
+
+        document.body.style.cursor = 'crosshair';
+        document.addEventListener('mousemove', drawTempConnection);
+        document.addEventListener('mouseup', finishConnection);
+      }
+
+      function drawTempConnection(e) {
+        if (!activeHandle) return;
+
+        if (!currentConnection) {
+          currentConnection = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'path'
+          );
+          currentConnection.classList.add('connection');
+          currentConnection.style.stroke = '#818cf8';
+          currentConnection.style.strokeDasharray = '5';
+          currentConnection.style.animation = 'flow 20s linear infinite';
+          document.getElementById('connections').appendChild(currentConnection);
+        }
+
+        const startPos = getHandlePosition(activeHandle.element);
+        const endPos = getMousePosition(e);
+
+        currentConnection.setAttribute(
+          'd',
+          `M ${startPos.x} ${startPos.y} Q ${(startPos.x + endPos.x) / 2} ${
+            startPos.y
+          } ${endPos.x} ${endPos.y}`
+        );
+      }
+
+      function finishConnection(e) {
+        document.body.classList.remove('no-select');
+        document.body.style.cursor = '';
+
+        if (!activeHandle) return;
+
+        const endElement = document.elementFromPoint(e.clientX, e.clientY);
+        if (endElement && endElement.classList.contains('node-handle')) {
+          const targetHandle = {
+            element: endElement,
+            node: endElement.closest('.strategy-node'),
+            type: endElement.dataset.handle,
+          };
+
+          if (isValidConnection(activeHandle, targetHandle)) {
+            createConnection(activeHandle, targetHandle);
+          }
+        }
+
+        if (currentConnection) currentConnection.remove();
+        currentConnection = null;
+        activeHandle = null;
+        document.removeEventListener('mousemove', drawTempConnection);
+        document.removeEventListener('mouseup', finishConnection);
+      }
+
+      function isValidConnection(source, target) {
+        return (
+          source.node !== target.node &&
+          ((source.type === 'output' && target.type === 'input') ||
+            (source.type === 'input' && target.type === 'output'))
+        );
+      }
+
+      function createConnection(source, target) {
+        const connection = {
+          source: { node: source.node, handle: source.element },
+          target: { node: target.node, handle: target.element },
+        };
+        connections.push(connection);
+        updateConnections();
+      }
+
+      function updateConnections() {
+        const svg = document.getElementById('connections');
+        svg.innerHTML = '';
+
+        connections.forEach((conn) => {
+          const start = getHandlePosition(conn.source.handle);
+          const end = getHandlePosition(conn.target.handle);
+
+          const path = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'path'
+          );
+          path.classList.add('connection');
+          path.setAttribute(
+            'd',
+            `M ${start.x} ${start.y} Q ${(start.x + end.x) / 2} ${start.y} ${
+              end.x
+            } ${end.y}`
+          );
+          svg.appendChild(path);
+        });
+      }
+
+      function getHandlePosition(handle) {
+        const rect = handle.getBoundingClientRect();
+        const canvasRect = document
+          .getElementById('canvas')
+          .getBoundingClientRect();
+        return {
+          x: rect.left - canvasRect.left + rect.width / 2,
+          y: rect.top - canvasRect.top + rect.height / 2,
+        };
+      }
+
+      function getMousePosition(e) {
+        const canvasRect = document
+          .getElementById('canvas')
+          .getBoundingClientRect();
+        return {
+          x: e.clientX - canvasRect.left,
+          y: e.clientY - canvasRect.top,
+        };
+      }
+    </script>
+  </body>
+</html>
